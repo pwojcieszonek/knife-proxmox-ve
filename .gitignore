@@ -1,0 +1,11 @@
+/.bundle/
+/vendor/bundle/
+/pkg/
+/tmp/
+/coverage/
+*.gem
+Gemfile.lock
+.rspec_status
+
+# transient workflow orchestration script
+.claude/wf-implement.js

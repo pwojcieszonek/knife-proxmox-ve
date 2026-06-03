@@ -1,0 +1,17 @@
+# chefstyle (a RuboCop ruleset) drives linting via `rake style`.
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: disable
+  Exclude:
+    - "vendor/**/*"
+    - "pkg/**/*"
+    - "*.gemspec"
+    - "Rakefile"
+    - "Gemfile"
+
+# Specs read more clearly without these constraints.
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
+Metrics/MethodLength:
+  Max: 30
