@@ -202,7 +202,9 @@ Lists the qemu templates on the selected cluster (name, VMID, node, disk, memory
 Lists the cluster's qemu VMs (name, VMID, node, status, memory, uptime). `--node` filters
 client-side.
 
-All read commands honour `--format json|yaml` for scripting.
+Disk, memory and uptime are rendered human-readable (e.g. `10 GiB`, `1h`) in the default
+table output. All read commands honour `--format json|yaml` for scripting, where these fields
+stay raw (bytes / seconds).
 
 ## Development
 

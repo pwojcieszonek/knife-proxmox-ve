@@ -41,7 +41,7 @@ RSpec.describe Chef::Knife::ProxmoxTemplateList do
       expect(api).to have_received(:list_resources).with(template: true)
     end
 
-    it "renders the template rows through the knife display pipeline" do
+    it "renders the template rows with human-readable sizes through the knife display pipeline" do
       allow(api).to receive(:list_resources).with(template: true).and_return(template_rows)
 
       command.run
@@ -52,9 +52,21 @@ RSpec.describe Chef::Knife::ProxmoxTemplateList do
           name:    "ubuntu-2404-template",
           vmid:    9000,
           node:    "pve1",
-          maxdisk: 10_737_418_240,
-          maxmem:  2_147_483_648
+          maxdisk: "10 GiB",
+          maxmem:  "2 GiB"
         )
+      end
+    end
+
+    it "keeps raw numeric sizes for json/yaml output (scripting)" do
+      command.ui.config[:format] = "json"
+      allow(api).to receive(:list_resources).with(template: true).and_return(template_rows)
+
+      command.run
+
+      expect(command.ui).to have_received(:output) do |displayed|
+        row = displayed.first
+        expect(row).to include(maxdisk: 10_737_418_240, maxmem: 2_147_483_648)
       end
     end
 

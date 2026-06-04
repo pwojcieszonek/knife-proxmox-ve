@@ -53,6 +53,42 @@ class Chef
         ui.info("#{ui.color(label, color)}: #{value}") if value && !value.to_s.empty?
       end
 
+      # Binary byte units, lowest first. Proxmox reports sizes in bytes against a 1024 base,
+      # so render in IEC units (KiB, MiB, ...) to match the values shown in the Proxmox UI.
+      BYTE_UNITS = %w{B KiB MiB GiB TiB PiB}.freeze
+
+      # Render a byte count as a human-readable IEC size (e.g. 10_737_418_240 -> "10 GiB").
+      # Passes nil through untouched so absent fields (a template has no live size) stay nil
+      # rather than becoming a misleading "0 B".
+      def human_bytes(value)
+        return value if value.nil?
+
+        size = value.to_f
+        unit = 0
+        while size >= 1024 && unit < BYTE_UNITS.length - 1
+          size /= 1024
+          unit += 1
+        end
+        format("%g %s", size.round(2), BYTE_UNITS[unit])
+      end
+
+      # Render a second count as a compact duration (e.g. 3600 -> "1h", 90_061 -> "1d 1h 1m 1s").
+      # nil passes through (a stopped/template VM reports no uptime); 0 renders as "0s".
+      def human_duration(seconds)
+        return seconds if seconds.nil?
+
+        days, rest = seconds.to_i.divmod(86_400)
+        hours, rest = rest.divmod(3_600)
+        minutes, secs = rest.divmod(60)
+
+        parts = []
+        parts << "#{days}d" if days > 0
+        parts << "#{hours}h" if hours > 0
+        parts << "#{minutes}m" if minutes > 0
+        parts << "#{secs}s" if secs > 0 || parts.empty?
+        parts.join(" ")
+      end
+
       # Whether a token secret resolves for the given cluster (symbol-keyed hash), using the
       # same precedence as #resolve_token_secret but without fatal-ing. Lets `cluster list`
       # report secret presence from a single source of truth.
