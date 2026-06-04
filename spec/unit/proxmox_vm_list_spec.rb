@@ -18,6 +18,16 @@ RSpec.describe Chef::Knife::ProxmoxVmList do
     ]
   end
 
+  # The same rows after the table humanizer runs: bytes -> IEC sizes, seconds -> duration.
+  let(:humanized_rows) do
+    [
+      { vmid: 101, node: "pve1", name: "web-01", status: "running",
+        template: 0, maxmem: "4 GiB", maxdisk: "10 GiB", uptime: "1h" },
+      { vmid: 102, node: "pve2", name: "db-01", status: "stopped",
+        template: 0, maxmem: "8 GiB", maxdisk: "20 GiB", uptime: "0s" },
+    ]
+  end
+
   let(:api) { instance_double(Knife::Proxmox::Api) }
 
   before do
@@ -35,8 +45,8 @@ RSpec.describe Chef::Knife::ProxmoxVmList do
       expect(api).to have_received(:list_resources).with(template: false)
     end
 
-    it "renders every row through format_for_display when no node filter is given" do
-      expect(command.ui).to receive(:output).with(rows)
+    it "renders every row with human-readable sizes and uptime when no node filter is given" do
+      expect(command.ui).to receive(:output).with(humanized_rows)
 
       command.run
     end
@@ -44,7 +54,15 @@ RSpec.describe Chef::Knife::ProxmoxVmList do
     it "narrows rows client-side to the --node value" do
       command.config[:node] = "pve2"
 
-      expect(command.ui).to receive(:output).with([rows[1]])
+      expect(command.ui).to receive(:output).with([humanized_rows[1]])
+
+      command.run
+    end
+
+    it "keeps raw numeric sizes and uptime for json/yaml output (scripting)" do
+      command.ui.config[:format] = "json"
+
+      expect(command.ui).to receive(:output).with(rows)
 
       command.run
     end

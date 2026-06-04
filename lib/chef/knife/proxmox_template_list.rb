@@ -37,7 +37,18 @@ class Chef
           }
         end
 
+        # Keep raw numbers for json/yaml (scripting); humanize only the rendered table.
+        rows = rows.map { |row| humanize(row) } unless ui.interchange?
         ui.output(format_for_display(rows))
+      end
+
+      private
+
+      def humanize(row)
+        row.merge(
+          maxdisk: human_bytes(row[:maxdisk]),
+          maxmem:  human_bytes(row[:maxmem])
+        )
       end
     end
   end

@@ -33,6 +33,8 @@ class Chef
 
         rows = proxmox_api.list_resources(template: false)
         rows = filter_by_node(rows)
+        # Keep raw numbers for json/yaml (scripting); humanize only the rendered table.
+        rows = rows.map { |row| humanize(row) } unless ui.interchange?
         ui.output(format_for_display(rows))
       end
 
@@ -43,6 +45,14 @@ class Chef
         return rows if node.nil? || node.to_s.empty?
 
         rows.select { |row| row[:node] == node }
+      end
+
+      def humanize(row)
+        row.merge(
+          maxmem:  human_bytes(row[:maxmem]),
+          maxdisk: human_bytes(row[:maxdisk]),
+          uptime:  human_duration(row[:uptime])
+        )
       end
     end
   end
