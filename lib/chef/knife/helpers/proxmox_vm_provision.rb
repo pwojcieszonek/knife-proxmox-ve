@@ -13,9 +13,11 @@ class Chef
     # cloud-init auth and plants it on the guest, but never touches the bootstrap connection.
     # The bootstrap command layers that on by overriding #apply_provision_auth!.
     module ProxmoxVmProvision
-      # Proxmox bridge interface names: "vmbr" followed by digits (vmbr0, vmbr1, ...).
-      # IP/gateway validation is handled separately by IPAddr in #validate_ip!/#validate_gateway!.
-      VMBR_PATTERN = /\Avmbr\d+\z/
+      # A bridge is any Linux network interface: a classic bridge (vmbr0), an SDN VNet
+      # (arbitrary name, e.g. "mail"), an OVS bridge, a bond, etc. We only enforce what the
+      # kernel itself does on an interface name — 1..15 chars, no whitespace, no "/", and not
+      # "." or "..". IP/gateway validation is handled separately by IPAddr below.
+      BRIDGE_PATTERN = %r{\A(?!\.{1,2}\z)[^\s/]{1,15}\z}
 
       # A pasted PRIVATE key must never travel as an authorized public key.
       PRIVATE_KEY_MARKER = /-----BEGIN [A-Z ]*PRIVATE KEY-----/
@@ -73,8 +75,8 @@ class Chef
           # --- Networking -------------------------------------------------------
 
           option :bridge,
-            long:        "--bridge vmbrN",
-            description: "Network bridge for net0 (e.g. vmbr0)."
+            long:        "--bridge NAME",
+            description: "Network bridge for net0 (e.g. vmbr0 or an SDN VNet name)."
 
           option :vlan,
             long:        "--vlan TAG",
@@ -193,9 +195,10 @@ class Chef
       def validate_bridge!
         bridge = config[:bridge]
         return if bridge.nil?
-        return if VMBR_PATTERN.match?(bridge)
+        return if BRIDGE_PATTERN.match?(bridge)
 
-        ui.fatal!("--bridge #{bridge.inspect} is not a valid bridge name (expected vmbrN, e.g. vmbr0)")
+        ui.fatal!("--bridge #{bridge.inspect} is not a valid interface name " \
+                  "(1-15 chars, no whitespace or '/'; e.g. vmbr0 or an SDN VNet name)")
       end
 
       def validate_ip!
