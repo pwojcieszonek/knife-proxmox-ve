@@ -229,6 +229,13 @@ RSpec.describe Chef::Knife::ProxmoxVmBootstrap do
       end
     end
 
+    it "accepts the cluster's default :ssh_public_key when --ssh-public-key is omitted" do
+      kpc.config[:ssh_public_key] = nil
+      Chef::Config[:knife][:proxmox_clusters]["production"][:ssh_public_key] = public_key_path
+
+      expect { kpc.plugin_validate_options! }.not_to raise_error
+    end
+
     it "prompts (no echo) for the password when --cipassword is set" do
       kpc.config[:ssh_public_key] = nil
       kpc.config[:cipassword] = true
@@ -254,7 +261,9 @@ RSpec.describe Chef::Knife::ProxmoxVmBootstrap do
       end
 
       it "fatals on a malformed --bridge" do
-        kpc.config[:bridge] = "eth0"
+        # Arbitrary interface names are accepted now (e.g. eth0, SDN VNets); only the kernel's
+        # own constraints are enforced — here a "/" makes it an invalid interface name.
+        kpc.config[:bridge] = "vm/br0"
 
         expect { kpc.plugin_validate_options! }.to raise_error(SystemExit)
         expect(kpc.ui).to have_received(:fatal!).with(/bridge/)
@@ -393,6 +402,35 @@ RSpec.describe Chef::Knife::ProxmoxVmBootstrap do
       kpc.plugin_create_instance!
 
       expect(kpc.config[:ssh_identity_file]).to eq(private_key)
+    end
+
+    it "defaults the bootstrap connection user to the cluster's :ciuser" do
+      kpc.plugin_create_instance!
+
+      expect(kpc.config[:connection_user]).to eq("ubuntu")
+    end
+
+    it "does not override an explicit --connection-user" do
+      kpc.config[:connection_user] = "admin"
+
+      kpc.plugin_create_instance!
+
+      expect(kpc.config[:connection_user]).to eq("admin")
+    end
+
+    it "plants the cluster's default :ssh_public_key on the guest when --ssh-public-key is omitted" do
+      kpc.config[:ssh_public_key] = nil
+      Chef::Config[:knife][:proxmox_clusters]["production"][:ssh_public_key] = public_key_path
+      # The shared before already memoized the cluster config; drop it so the new default is read.
+      kpc.instance_variable_set(:@proxmox_cluster_config, nil)
+      kpc.plugin_validate_options!
+
+      expect(provisioner).to receive(:provision) do |spec|
+        expect(spec[:config][:ssh_public_key]).to match(/\Assh-ed25519 /)
+        Knife::Proxmox::Provisioner::Result.new(vmid: 9001, node: "pve1", ip: "10.0.10.50")
+      end
+
+      kpc.plugin_create_instance!
     end
   end
 

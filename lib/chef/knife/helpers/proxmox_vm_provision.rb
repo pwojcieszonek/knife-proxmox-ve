@@ -110,7 +110,8 @@ class Chef
 
           option :ssh_public_key,
             long:        "--ssh-public-key PATH",
-            description: "Path to an SSH PUBLIC key authorized for the cloud-init user."
+            description: "Path to an SSH PUBLIC key authorized for the cloud-init user. " \
+                         "Defaults to the cluster's :ssh_public_key when set."
 
           option :cipassword,
             long:        "--cipassword",
@@ -246,8 +247,8 @@ class Chef
         return if @ssh_public_key || @cipassword
 
         ui.fatal!(
-          "no SSH credential for the new VM: pass --ssh-public-key PATH, or provide a " \
-          "cloud-init password via #{ENV_CIPASSWORD} or --cipassword"
+          "no SSH credential for the new VM: pass --ssh-public-key PATH (or set the cluster's " \
+          ":ssh_public_key), or provide a cloud-init password via #{ENV_CIPASSWORD} or --cipassword"
         )
       end
 
@@ -264,7 +265,7 @@ class Chef
       # looks like a private key (a common copy-paste mistake that must never be
       # uploaded as an authorized key).
       def resolve_ssh_public_key
-        path = config[:ssh_public_key]
+        path = from_cli_or_cluster(:ssh_public_key)
         return nil if blank?(path)
 
         @ssh_public_key_path = File.expand_path(path)
