@@ -45,12 +45,16 @@ knife[:proxmox_clusters] = {
     verify_ssl:   true,                  # optional (default true); false warns every run
 
     # Optional per-cluster provisioning defaults (any CLI flag overrides these):
-    storage:      "local-lvm",
-    bridge:       "vmbr0",
-    ciuser:       "ubuntu",
-    nameserver:   "10.0.0.1",
-    searchdomain: "example.com",
-    target_node:  nil,
+    storage:        "local-lvm",
+    bridge:         "vmbr0",
+    ciuser:         "ubuntu",
+    ssh_public_key: "~/.ssh/id_ed25519.pub", # default authorized key; satisfies the auth
+                                             # requirement without --ssh-public-key. For
+                                             # `vm bootstrap`, :ciuser also becomes the
+                                             # default --connection-user.
+    nameserver:     "10.0.0.1",
+    searchdomain:   "example.com",
+    target_node:    nil,
   },
 }
 
@@ -150,13 +154,14 @@ Both commands share the provisioning flags below.
 | `--bridge vmbrN` / `--vlan TAG` | net0 bridge and VLAN tag (needs a VLAN-aware bridge). |
 | `--ip CIDR\|dhcp` / `--gateway IP` / `--prefix N` | Static IPv4 (`10.0.10.5/24`, or a bare IP with `--prefix`) or `dhcp`. |
 | `--nameserver IP` / `--searchdomain DOMAIN` | cloud-init DNS. |
-| `--ciuser USER` | cloud-init user. |
-| `--ssh-public-key PATH` | Public key injected via cloud-init (preferred auth). |
+| `--ciuser USER` | cloud-init user. For `vm bootstrap`, also the default `--connection-user`. |
+| `--ssh-public-key PATH` | Public key injected via cloud-init (preferred auth). Falls back to the cluster's `:ssh_public_key`. |
 | `--cipassword` | Prompt (no echo) for a cloud-init password; or set `KNIFE_PROXMOX_CIPASSWORD`. |
 | `--clone-timeout SEC` / `--boot-timeout SEC` | Clone and boot/SSH wait limits (default 600 / 300). |
 
 For `vm bootstrap`, the standard `knife bootstrap` options are inherited: `-N/--node-name`,
-`-r/--run-list`, `-E/--environment`, `--connection-user`, `--ssh-identity-file`,
+`-r/--run-list`, `-E/--environment`, `--connection-user` (defaults to the resolved `:ciuser`,
+since cloud-init creates the guest account under that name), `--ssh-identity-file`,
 `--bootstrap-version`, `--ssh-verify-host-key` (defaults to `:accept_new` for the
 freshly-created host), `--yes`, etc. They do not apply to `vm create`, which never bootstraps.
 

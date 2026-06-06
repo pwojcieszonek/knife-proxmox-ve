@@ -95,6 +95,11 @@ class Chef
       def apply_provision_auth!(spec)
         super
 
+        # cloud-init creates the guest account as :ciuser, so the bootstrap must connect as that
+        # same user. Fall back to it when the operator did not pass an explicit --connection-user.
+        ciuser = from_cli_or_cluster(:ciuser)
+        config[:connection_user] ||= ciuser if ciuser
+
         config[:connection_password] = @cipassword if @cipassword
 
         return unless @ssh_public_key
