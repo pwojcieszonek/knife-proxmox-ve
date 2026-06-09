@@ -28,13 +28,30 @@ class Chef
       CINC_PRODUCT = "cinc"
       CINC_INSTALL_URL = "https://omnitruck.cinc.sh/install.sh"
 
-      # A freshly cloned VM often still runs cloud-init (which itself drives apt) when SSH first
-      # answers. Installing the client then races cloud-init for the dpkg lock and fails
-      # non-deterministically. Block on cloud-init completion before the omnibus install so a
-      # single `vm bootstrap` is reliable. Guarded so non-cloud-init images don't error, and
-      # `|| true` so a degraded/errored cloud-init state still lets the bootstrap proceed.
-      CLOUD_INIT_WAIT_COMMAND =
-        "if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait >/dev/null 2>&1 || true; fi"
+      # A freshly cloned VM is still settling when SSH first answers, and two independent
+      # subsystems contend for the dpkg lock: cloud-init (which itself drives apt) and the
+      # apt-daily / unattended-upgrades systemd timers, which fire on their own schedule even
+      # after cloud-init reports done. Installing the client — or the first client run's package
+      # resources — then races them for the lock and fails non-deterministically. Clear the field
+      # before the omnibus install, in order:
+      #   1. wait for cloud-init to finish;
+      #   2. stop the apt-daily / unattended-upgrades timers and any in-flight run, so nothing
+      #      grabs the lock again for the rest of this boot (`stop`, not `disable`/`mask`: the
+      #      services return on the next reboot, leaving the image unchanged);
+      #   3. block (bounded) until the dpkg lock a stopped run may still hold is released.
+      # Every step is guarded on the tool existing and `|| true`, so non-cloud-init / non-systemd
+      # / non-apt images and degraded states still let the bootstrap proceed.
+      PREINSTALL_WAIT_COMMAND = <<~SH
+        if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait >/dev/null 2>&1 || true; fi
+        if command -v systemctl >/dev/null 2>&1; then
+          systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true
+        fi
+        if command -v flock >/dev/null 2>&1; then
+          for lock in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock; do
+            [ -e "$lock" ] && flock -w 300 "$lock" true >/dev/null 2>&1 || true
+          done
+        fi
+      SH
 
       deps do
         require "chef/knife/bootstrap"
@@ -60,8 +77,8 @@ class Chef
         # TOFU: a freshly cloned VM has no entry in known_hosts. Accept its key on
         # first connect rather than failing the bootstrap or disabling verification.
         config[:ssh_verify_host_key] ||= :accept_new
-        # Wait for cloud-init to finish before the bootstrap installs the client (see constant).
-        config[:bootstrap_preinstall_command] ||= CLOUD_INIT_WAIT_COMMAND
+        # Drain cloud-init and the dpkg lock before the bootstrap installs the client (see constant).
+        config[:bootstrap_preinstall_command] ||= PREINSTALL_WAIT_COMMAND
       end
 
       # The bootstrap target host does not exist yet — it is resolved to the VM's IP
