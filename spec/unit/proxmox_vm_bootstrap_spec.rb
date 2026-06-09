@@ -103,6 +103,22 @@ RSpec.describe Chef::Knife::ProxmoxVmBootstrap do
       expect(kpc.config[:bootstrap_preinstall_command]).to match(/cloud-init status --wait/)
     end
 
+    it "stops the apt-daily and unattended-upgrades timers for the duration of the boot" do
+      kpc.plugin_setup!
+
+      preinstall = kpc.config[:bootstrap_preinstall_command]
+      expect(preinstall).to match(/systemctl stop .*apt-daily-upgrade\.timer/)
+      expect(preinstall).to match(/systemctl stop .*unattended-upgrades\.service/)
+    end
+
+    it "drains the dpkg lock before the bootstrap installs the client" do
+      kpc.plugin_setup!
+
+      preinstall = kpc.config[:bootstrap_preinstall_command]
+      expect(preinstall).to match(/flock -w \d+ "\$lock"/)
+      expect(preinstall).to match(%r{/var/lib/dpkg/lock-frontend})
+    end
+
     it "does not override an explicit --bootstrap-preinstall-command" do
       kpc.config[:bootstrap_preinstall_command] = "echo custom-preinstall"
 
