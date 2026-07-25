@@ -28,6 +28,13 @@ class Chef
       # ENV override for the cloud-init password so it never lands in shell history.
       ENV_CIPASSWORD = "KNIFE_PROXMOX_CIPASSWORD"
 
+      # A qemu disk key: bus name plus its index (scsi0, virtio1, sata0, ide0).
+      DISK_PATTERN = /\A(?:scsi|virtio|sata|ide)\d+\z/
+
+      # Proxmox's own size format for the resize endpoint: an optional "+" (grow by), a
+      # number, and an optional K/M/G/T unit (no unit means bytes).
+      DISK_SIZE_PATTERN = /\A\+?\d+(\.\d+)?[KMGT]?\z/
+
       def self.included(includer)
         includer.class_eval do
           # --- Source template / clone placement --------------------------------
@@ -71,6 +78,15 @@ class Chef
           option :memory,
             long:        "--memory MiB",
             description: "Memory in MiB."
+
+          option :disk,
+            long:        "--disk DISK",
+            description: "Disk to resize (e.g. scsi0). Defaults to the cloned VM's boot disk."
+
+          option :disk_size,
+            long:        "--disk-size SIZE",
+            description: "Resize the disk before the first boot: '+20G' adds to the template's " \
+                         "size, '50G' sets it. Proxmox cannot shrink a disk."
 
           # --- Networking -------------------------------------------------------
 
@@ -147,6 +163,7 @@ class Chef
 
         validate_scalars!
         validate_network!
+        validate_disk!
         resolve_ssh_auth!(require_credential: require_ssh_auth)
         true
       end
@@ -220,6 +237,23 @@ class Chef
         ui.fatal!("--gateway #{gateway.inspect} must be an IPv4 address") unless addr.ipv4?
       rescue IPAddr::Error
         ui.fatal!("--gateway #{gateway.inspect} is not a valid IPv4 address")
+      end
+
+      # The size format is Proxmox's, so it is checked here rather than server-side: a typo
+      # like "20GB" would otherwise surface as an opaque HTTP 400 after the clone already ran.
+      def validate_disk!
+        disk = config[:disk]
+        size = config[:disk_size]
+
+        if !disk.nil? && !DISK_PATTERN.match?(disk.to_s)
+          ui.fatal!("--disk #{disk.inspect} is not a disk key (e.g. scsi0, virtio0, sata0, ide0)")
+        end
+        ui.fatal!("--disk needs --disk-size; naming a disk alone changes nothing") if !disk.nil? && size.nil?
+        return if size.nil?
+        return if DISK_SIZE_PATTERN.match?(size.to_s)
+
+        ui.fatal!("--disk-size #{size.inspect} is not a Proxmox size " \
+                  "(e.g. +20G to grow by 20 GiB, or 50G for an absolute size)")
       end
 
       def positive_integer!(key, value)
@@ -305,6 +339,10 @@ class Chef
           # clones only — for a linked clone the CLI/cluster storage is dropped entirely.
           storage:       full ? from_cli_or_cluster(:storage) : nil,
           pool:          config[:pool],
+          # Disk growth is applied to the clone before its first start (see Provisioner);
+          # nil disk_size means the template's disk is kept as-is.
+          disk:          config[:disk],
+          disk_size:     config[:disk_size],
           clone_timeout: config[:clone_timeout],
           boot_timeout:  config[:boot_timeout],
           # Post-start wait policy (see Provisioner#wait_for_ip). Defaults suit bootstrap;

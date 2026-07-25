@@ -31,6 +31,18 @@ module Knife
       CLOUDINIT_DRIVE_KEY = /\A(?:ide|scsi|sata)\d+\z/
       CLOUDINIT_DRIVE_VALUE = /cloudinit/
 
+      # Config keys that can carry a resizable virtual disk.
+      DISK_KEY = /\A(?:scsi|virtio|sata|ide)\d+\z/
+
+      # Drives that are not resizable storage: the cloud-init drive and any CD-ROM.
+      NON_DISK_VALUE = /cloudinit|media=cdrom/
+
+      # Modern boot config: "boot: order=scsi0;ide2;net0".
+      BOOT_ORDER = /\border=([^,]+)/
+
+      # A Proxmox worker id, as returned by endpoints that offload their work to a task.
+      UPID_PREFIX = "UPID:"
+
       # Proxmox reports a VMID collision as a non-2xx body mentioning the existing id.
       DUPLICATE_ID = /already exists|config file already exists|VM \d+ already/i
 
@@ -49,8 +61,12 @@ module Knife
         node = spec[:target_node] || template[:node]
 
         params = build_config(spec.fetch(:config, {}) || {})
-        guard_cloud_init_drive!(node, newid, spec[:name]) if cloud_init?(params)
+        # One read serves both the cloud-init drive guard and disk discovery; a hardware-only
+        # provision needs neither and never reads the config back.
+        vm_config = read_vm_config(node, newid, params, spec)
+        guard_cloud_init_drive!(vm_config, spec[:name]) if cloud_init?(params)
         @api.update_config(node:, vmid: newid, **params) unless params.empty?
+        resize_disk!(node, newid, vm_config, spec) if spec[:disk_size]
 
         boot(node, newid)
         ip = wait_for_ip(spec, node, newid)
@@ -154,10 +170,16 @@ module Knife
           params.key?(:ipconfig0) || params.key?(:nameserver) || params.key?(:searchdomain)
       end
 
+      # Read the cloned VM's config only when something downstream actually needs it.
+      def read_vm_config(node, vmid, params, spec)
+        return nil unless cloud_init?(params) || spec[:disk_size]
+
+        @api.vm_config(node:, vmid:)
+      end
+
       # Fail fast before a doomed bootstrap: if the (template-derived) VM has no cloud-init
       # drive, the keys we are about to set would be silently ignored by the guest.
-      def guard_cloud_init_drive!(node, vmid, name)
-        config = @api.vm_config(node:, vmid:)
+      def guard_cloud_init_drive!(config, name)
         present = config.any? do |key, value|
           CLOUDINIT_DRIVE_KEY.match?(key.to_s) && CLOUDINIT_DRIVE_VALUE.match?(value.to_s)
         end
@@ -166,6 +188,61 @@ module Knife
         raise Knife::Proxmox::Error,
           "template #{name} has no cloud-init drive (ide2=<storage>:cloudinit); " \
           "cloud-init settings would be silently ignored"
+      end
+
+      # Grow a disk of the fresh clone, BEFORE its first start: cloud-init's growpart/resizefs
+      # only run on boot, so a disk grown now ends up usable inside the guest, while a resize
+      # after boot leaves the extra space unclaimed until something in the guest is told to
+      # take it.
+      def resize_disk!(node, vmid, vm_config, spec)
+        disk = resolve_disk(vm_config, spec[:disk])
+        size = spec.fetch(:disk_size)
+        @ui&.info("Resizing #{disk} of VM #{vmid} to #{size}...")
+        upid = @api.resize_disk(node:, vmid:, disk:, size:)
+        # PVE 8 offloads the resize to a worker and hands back its UPID; older releases resize
+        # inline and return nothing, so there is nothing to wait on.
+        @api.wait_task(upid:) if task_upid?(upid)
+      end
+
+      # An explicitly named disk must exist on the VM — resizing a key Proxmox does not know
+      # is a silent no-op otherwise. Without one, fall back to the detected boot disk.
+      def resolve_disk(vm_config, disk)
+        return detect_disk(vm_config) if disk.nil?
+        return disk.to_s if vm_config.key?(disk.to_s)
+
+        raise Knife::Proxmox::Error,
+          "VM has no disk #{disk} (found: #{disk_keys(vm_config).join(", ")})"
+      end
+
+      # The disk to grow when the caller named none: the first entry of the VM's boot order
+      # that is a real disk, else the lowest-sorting disk key. cloud-init drives and CD-ROMs
+      # are never candidates.
+      def detect_disk(vm_config)
+        candidates = disk_keys(vm_config)
+        # Array#& keeps the receiver's order, so the boot order wins where it says anything.
+        disk = (boot_order(vm_config) & candidates).first || candidates.min
+        return disk if disk
+
+        raise Knife::Proxmox::Error,
+          "cannot tell which disk to resize (no disk found on the VM); pass --disk scsi0"
+      end
+
+      def disk_keys(vm_config)
+        vm_config.select do |key, value|
+          DISK_KEY.match?(key.to_s) && !NON_DISK_VALUE.match?(value.to_s)
+        end.keys.map(&:to_s)
+      end
+
+      def boot_order(vm_config)
+        match = BOOT_ORDER.match(vm_config["boot"].to_s)
+        return match[1].split(";") if match
+
+        # Pre-6.4 layout: "boot: cdn" plus a separate "bootdisk: scsi0".
+        [vm_config["bootdisk"]].compact.map(&:to_s)
+      end
+
+      def task_upid?(value)
+        value.is_a?(String) && value.start_with?(UPID_PREFIX)
       end
 
       def boot(node, vmid)

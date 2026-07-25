@@ -151,6 +151,8 @@ Both commands share the provisioning flags below.
 | `--linked-clone` | Linked clone instead of the default full clone (`--storage` is then ignored). |
 | `--storage NAME` / `--pool NAME` | Target storage / resource pool. |
 | `--cores N` / `--sockets N` / `--memory MiB` | CPU / RAM. |
+| `--disk-size SIZE` | Grow the disk before the first boot: `+20G` adds to the template's size, `50G` sets it. |
+| `--disk DISK` | Disk to resize (`scsi0`, `virtio0`, …). Defaults to the cloned VM's boot disk. |
 | `--bridge vmbrN` / `--vlan TAG` | net0 bridge and VLAN tag (needs a VLAN-aware bridge). |
 | `--ip CIDR\|dhcp` / `--gateway IP` / `--prefix N` | Static IPv4 (`10.0.10.5/24`, or a bare IP with `--prefix`) or `dhcp`. |
 | `--nameserver IP` / `--searchdomain DOMAIN` | cloud-init DNS. |
@@ -168,6 +170,23 @@ freshly-created host), `--yes`, etc. They do not apply to `vm create`, which nev
 **Clone mode.** The clone is a **full clone by default**. Pass `--linked-clone` for a linked
 clone (faster, thin) — it requires a storage that supports it, and any `--storage` (CLI or
 cluster default) is then dropped, because Proxmox rejects a target storage on a linked clone.
+
+**Disk resize.** `--disk-size` grows the clone's disk **between the clone and the first start**,
+so cloud-init's `growpart`/`resizefs` claim the extra space on that first boot and the guest
+filesystem comes up at full size — no second run, no manual step in the guest. The size format is
+Proxmox's own: `+20G` adds 20 GiB to whatever the template had (the portable choice), a bare `50G`
+sets an absolute size. **Proxmox cannot shrink a disk** — an absolute size below the current one is
+rejected by the API.
+
+Without `--disk`, the disk is the cloned VM's boot disk: the first entry of its `boot` order that is
+a real disk (cloud-init drives and CD-ROMs are skipped), falling back to its lowest-sorting disk key.
+Pass `--disk scsi1` to grow a specific one — naming a disk the VM does not have fails before the VM
+is started, rather than silently doing nothing. Growing the disk requires `VM.Config.Disk` plus
+`Datastore.AllocateSpace` on the target storage.
+
+```bash
+knife proxmox vm create web-01 --template ubuntu-2404-template --disk-size +40G
+```
 
 **Bootstrap product (CINC by default).** A `vm bootstrap`'d VM is bootstrapped with **CINC** out of the
 box — the install is pinned to the CINC omnitruck regardless of whether you invoke a CINC- or
