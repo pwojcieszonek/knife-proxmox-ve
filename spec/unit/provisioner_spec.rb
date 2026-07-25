@@ -44,6 +44,7 @@ RSpec.describe Knife::Proxmox::Provisioner do
     allow(api).to receive(:start).and_return(start_upid)
     allow(api).to receive(:wait_task).and_return(true)
     allow(api).to receive(:vm_config).and_return(ci_config)
+    allow(api).to receive(:resize_disk).and_return(nil)
     allow(api).to receive(:agent_ip_addresses).and_return([agent_ip])
   end
 
@@ -241,6 +242,107 @@ RSpec.describe Knife::Proxmox::Provisioner do
       expect(api).not_to receive(:vm_config)
 
       provisioner.provision(base_spec(config: { cores: 4, memory: 4096 }))
+    end
+  end
+
+  describe "#provision disk resize" do
+    # A stopped clone with a boot disk, a data disk, a cloud-init drive and a CD-ROM.
+    let(:disk_config) do
+      {
+        "boot"   => "order=scsi0;ide2;net0",
+        "scsi0"  => "local-lvm:vm-9001-disk-0,size=10G",
+        "scsi1"  => "local-lvm:vm-9001-disk-1,size=5G",
+        "ide2"   => "local-lvm:vm-9001-cloudinit,media=cdrom",
+        "ide0"   => "none,media=cdrom",
+      }
+    end
+
+    before do
+      allow_happy_path
+      allow(api).to receive(:vm_config).and_return(disk_config)
+    end
+
+    it "resizes the boot disk named by the boot order, skipping cloud-init and CD-ROM drives" do
+      expect(api).to receive(:resize_disk).with(node: "pve1", vmid: 9001, disk: "scsi0", size: "+20G")
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+    end
+
+    it "resizes BEFORE the VM is started, so cloud-init grows the filesystem on first boot" do
+      calls = []
+      allow(api).to receive(:resize_disk) { calls << :resize }
+      allow(api).to receive(:start) { calls << :start; start_upid }
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+
+      expect(calls).to eq(%i{resize start})
+    end
+
+    it "honors an explicitly named disk" do
+      expect(api).to receive(:resize_disk).with(hash_including(disk: "scsi1", size: "50G"))
+
+      provisioner.provision(base_spec(disk: "scsi1", disk_size: "50G", config: { ip: "dhcp" }))
+    end
+
+    it "raises before booting when the named disk is not on the VM" do
+      expect(api).not_to receive(:resize_disk)
+      expect(api).not_to receive(:start)
+
+      expect { provisioner.provision(base_spec(disk: "virtio3", disk_size: "+20G")) }
+        .to raise_error(Knife::Proxmox::Error, /no disk virtio3/)
+    end
+
+    it "falls back to the lowest-sorting disk when the config carries no boot order" do
+      allow(api).to receive(:vm_config)
+        .and_return("virtio0" => "local-lvm:vm-9001-disk-0,size=10G", "ide2" => "local-lvm:vm-9001-cloudinit")
+
+      expect(api).to receive(:resize_disk).with(hash_including(disk: "virtio0"))
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+    end
+
+    it "reads the pre-6.4 bootdisk key when there is no boot order" do
+      allow(api).to receive(:vm_config).and_return(
+        "boot" => "cdn", "bootdisk" => "scsi1",
+        "scsi0" => "local-lvm:vm-9001-disk-0,size=10G",
+        "scsi1" => "local-lvm:vm-9001-disk-1,size=5G",
+        "ide2" => "local-lvm:vm-9001-cloudinit,media=cdrom"
+      )
+
+      expect(api).to receive(:resize_disk).with(hash_including(disk: "scsi1"))
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+    end
+
+    it "raises when the VM carries no resizable disk at all" do
+      allow(api).to receive(:vm_config).and_return("ide2" => "local-lvm:vm-9001-cloudinit")
+
+      expect { provisioner.provision(base_spec(disk_size: "+20G")) }
+        .to raise_error(Knife::Proxmox::Error, /cannot tell which disk/)
+    end
+
+    it "waits on the resize worker when Proxmox returns a UPID (PVE 8)" do
+      resize_upid = "UPID:pve1:00009999:00ABCDEF:00000000:resize:9001:knife@pve!automation:"
+      allow(api).to receive(:resize_disk).and_return(resize_upid)
+
+      expect(api).to receive(:wait_task).with(upid: resize_upid).and_return(true)
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+    end
+
+    it "does not wait on a task when the resize was done inline (nil return)" do
+      allow(api).to receive(:resize_disk).and_return(nil)
+
+      provisioner.provision(base_spec(disk_size: "+20G", config: { ip: "dhcp" }))
+
+      expect(api).to have_received(:wait_task).twice # clone + start only
+    end
+
+    it "never resizes (nor reads the config) when no disk_size is given" do
+      expect(api).not_to receive(:resize_disk)
+      expect(api).not_to receive(:vm_config)
+
+      provisioner.provision(base_spec(config: { cores: 4 }))
     end
   end
 

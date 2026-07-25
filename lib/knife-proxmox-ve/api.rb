@@ -76,6 +76,15 @@ module Knife
         @client.post("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/config", params)
       end
 
+      # Grow a virtual disk. +size+ uses Proxmox's own format: "+<n>[KMGT]" adds to the
+      # current size, a bare "<n>[KMGT]" sets the new absolute size (Proxmox refuses to
+      # shrink). PVE 8 runs the resize in a worker and returns a UPID; earlier releases do
+      # the work inline and return nil — the caller decides whether there is a task to wait
+      # on, since sequencing is not this class's job.
+      def resize_disk(node:, vmid:, disk:, size:)
+        @client.put("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/resize", { disk:, size: })
+      end
+
       # Start a VM. Returns the UPID of the async start task.
       def start(node:, vmid:)
         @client.post("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/status/start")

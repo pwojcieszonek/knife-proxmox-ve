@@ -100,6 +100,22 @@ RSpec.describe Knife::Proxmox::Client do
     end
   end
 
+  describe "#put" do
+    it "form-encodes the body on a PUT and unwraps data" do
+      stub = stub_request(:put, "#{base}/nodes/pve1/qemu/9001/resize")
+        .with(
+          headers: { "Authorization" => auth_header, "Content-Type" => "application/x-www-form-urlencoded" },
+          body: { "disk" => "scsi0", "size" => "+20G" }
+        )
+        .to_return(status: 200, body: ProxmoxResponses.wrap(ProxmoxResponses.upid(type: "resize")))
+
+      result = client.put("/nodes/pve1/qemu/9001/resize", disk: "scsi0", size: "+20G")
+
+      expect(stub).to have_been_requested
+      expect(result).to eq(ProxmoxResponses.upid(type: "resize"))
+    end
+  end
+
   describe "error mapping" do
     it "raises AuthError on 401 with a privilege-separation hint" do
       stub_request(:get, "#{base}/x").to_return(status: 401, body: ProxmoxResponses.wrap(nil))

@@ -80,14 +80,14 @@ RSpec.describe "vm provision flow", type: :functional do
 
   # The spec the Provisioner consumes. Template is resolved through the real Api so the
   # /cluster/resources round-trip is part of the integration.
-  def build_spec
+  def build_spec(overrides = {})
     {
       template:      api.find_template("ubuntu-2404-template"),
       name:          "web-02",
       clone_timeout: 120,
       boot_timeout:  60,
       config:        { ip: "10.0.10.50/24", ciuser: "ubuntu" },
-    }
+    }.merge(overrides)
   end
 
   it "drives clone -> configure -> start -> wait and returns the VM identity" do
@@ -101,6 +101,29 @@ RSpec.describe "vm provision flow", type: :functional do
 
     # Prove the whole sequence actually hit the wire, in shape.
     stubs.each_value { |stub| expect(stub).to have_been_requested }
+  end
+
+  it "grows the boot disk over PUT /resize and waits on the worker before starting" do
+    resize_upid = ProxmoxResponses.upid(node: "pve1", type: "resize")
+
+    stubs = stub_happy_path(
+      vm_config_body: ProxmoxResponses.wrap(
+        "boot" => "order=scsi0;ide2", "scsi0" => "local-lvm:vm-9001-disk-0,size=10G",
+        "ide2" => "local-lvm:vm-9001-cloudinit,media=cdrom"
+      )
+    )
+    resize = stub_request(:put, "#{base}/nodes/pve1/qemu/9001/resize")
+      .with(body: { "disk" => "scsi0", "size" => "+20G" })
+      .to_return(status: 200, body: ProxmoxResponses.wrap(resize_upid))
+    resize_task = stub_request(:get, "#{base}/nodes/pve1/tasks/#{enc(resize_upid)}/status")
+      .to_return(status: 200, body: task_status_ok(resize_upid))
+
+    result = provisioner.provision(build_spec(disk_size: "+20G"))
+
+    expect(result).to have_attributes(vmid: 9001, ip: "10.0.10.50")
+    stubs.each_value { |stub| expect(stub).to have_been_requested }
+    expect(resize).to have_been_requested
+    expect(resize_task).to have_been_requested
   end
 
   it "raises before booting when the template has no cloud-init drive" do

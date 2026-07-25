@@ -62,6 +62,12 @@ module Knife
         send_with_body(Net::HTTP::Post, path, body)
       end
 
+      # PUT +path+ with a form-encoded body. Proxmox reserves PUT for in-place mutations of
+      # an existing object (e.g. the qemu disk resize endpoint).
+      def put(path, body = {})
+        send_with_body(Net::HTTP::Put, path, body)
+      end
+
       # Redact secret-bearing values from arbitrary text (e.g. a Proxmox task log, which is
       # returned with HTTP 200 and so does not pass through the error-body scrub path).
       def scrub_text(str)

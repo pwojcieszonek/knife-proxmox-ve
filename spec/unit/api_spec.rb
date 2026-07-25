@@ -119,6 +119,26 @@ RSpec.describe Knife::Proxmox::Api do
     end
   end
 
+  describe "#resize_disk" do
+    it "PUTs disk and size to the resize path and returns the worker UPID (PVE 8)" do
+      stub = stub_request(:put, "#{base}/nodes/pve1/qemu/9001/resize")
+        .with(body: { "disk" => "scsi0", "size" => "+20G" })
+        .to_return(status: 200, body: ProxmoxResponses.wrap(ProxmoxResponses.upid(type: "resize")))
+
+      result = api.resize_disk(node: "pve1", vmid: 9001, disk: "scsi0", size: "+20G")
+
+      expect(stub).to have_been_requested
+      expect(result).to eq(ProxmoxResponses.upid(type: "resize"))
+    end
+
+    it "returns nil when the release resizes inline instead of spawning a worker" do
+      stub_request(:put, "#{base}/nodes/pve1/qemu/9001/resize")
+        .to_return(status: 200, body: ProxmoxResponses.wrap(nil))
+
+      expect(api.resize_disk(node: "pve1", vmid: 9001, disk: "scsi0", size: "50G")).to be_nil
+    end
+  end
+
   describe "#start" do
     it "posts to status/start and returns the UPID" do
       stub = stub_request(:post, "#{base}/nodes/pve1/qemu/9001/status/start")

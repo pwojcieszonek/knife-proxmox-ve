@@ -149,6 +149,59 @@ RSpec.describe Chef::Knife::ProxmoxVmCreate do
     end
   end
 
+  describe "disk resize" do
+    it "passes --disk-size and --disk through to the provisioner spec" do
+      kpc.config[:disk] = "scsi0"
+      kpc.config[:disk_size] = "+20G"
+
+      expect(provisioner).to receive(:provision) do |spec|
+        expect(spec[:disk]).to eq("scsi0")
+        expect(spec[:disk_size]).to eq("+20G")
+        Knife::Proxmox::Provisioner::Result.new(vmid: 9001, node: "pve1", ip: "10.0.10.50")
+      end
+
+      kpc.run
+    end
+
+    it "leaves both nil when neither flag is given (the template's disk is kept)" do
+      expect(provisioner).to receive(:provision) do |spec|
+        expect(spec[:disk]).to be_nil
+        expect(spec[:disk_size]).to be_nil
+        Knife::Proxmox::Provisioner::Result.new(vmid: 9001, node: "pve1", ip: "10.0.10.50")
+      end
+
+      kpc.run
+    end
+
+    it "accepts an absolute size without a leading +" do
+      kpc.config[:disk_size] = "50G"
+
+      expect { kpc.run }.not_to raise_error
+    end
+
+    it "fatals on a size Proxmox would reject (e.g. 20GB)" do
+      kpc.config[:disk_size] = "20GB"
+
+      expect { kpc.run }.to raise_error(SystemExit)
+      expect(kpc.ui).to have_received(:fatal!).with(/not a Proxmox size/)
+    end
+
+    it "fatals on a --disk that is not a disk key" do
+      kpc.config[:disk] = "eth0"
+      kpc.config[:disk_size] = "+20G"
+
+      expect { kpc.run }.to raise_error(SystemExit)
+      expect(kpc.ui).to have_received(:fatal!).with(/not a disk key/)
+    end
+
+    it "fatals on --disk without --disk-size (it would change nothing)" do
+      kpc.config[:disk] = "scsi0"
+
+      expect { kpc.run }.to raise_error(SystemExit)
+      expect(kpc.ui).to have_received(:fatal!).with(/--disk needs --disk-size/)
+    end
+  end
+
   describe "cloud-init auth (optional, unlike vm bootstrap)" do
     it "succeeds with NO SSH credential at all (template-baked login is valid)" do
       expect { kpc.run }.not_to raise_error
