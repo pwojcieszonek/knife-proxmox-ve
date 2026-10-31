@@ -1,6 +1,8 @@
 # Publishes the gem to rubygems.org when the version is bumped.
 #
-# Trigger: any push to `main` that touches lib/knife-proxmox-ve/version.rb.
+# Trigger: any push to `main` that touches lib/knife-proxmox-ve/version.rb or the
+# gemspec, or a manual run (workflow_dispatch) to retry an unreleased version. A
+# version whose tag already exists is skipped, so extra runs are harmless.
 # The version file is the single source of truth — there is no separate tagging
 # step and therefore no tag/version drift. `rubygems/release-gem` runs
 # `rake release`, which builds the gem, creates and pushes the matching
@@ -22,9 +24,13 @@ on:
       - main
     paths:
       - lib/knife-proxmox-ve/version.rb
+      - knife-proxmox-ve.gemspec
+  workflow_dispatch:
 
 jobs:
   release:
+    # A manual run can target any branch; only main may publish.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     # Must match the Trusted Publisher configured on rubygems.org. Add required

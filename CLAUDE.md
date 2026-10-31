@@ -56,6 +56,10 @@ via Trusted Publishing. Never create version tags manually; the version
 file is the single source of truth. CHANGELOG.md is intentionally unused
 (GitHub Releases auto-generates notes).
 
+A failed release leaves no tag, so the version is still unreleased: fix it
+on main and run `gh workflow run release.yml` rather than bumping again.
+Re-running the failed run rebuilds the old, broken commit.
+
 ## Etiquette
 
 Branches `feature/…`, `bugfix/…`, `fix/…`, `change/…`, merged to main via
