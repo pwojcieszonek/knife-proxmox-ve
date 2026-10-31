@@ -75,6 +75,11 @@ class Chef
             long:        "--sockets N",
             description: "Number of CPU sockets."
 
+          option :vcpus,
+            long:        "--vcpus N",
+            description: "Number of active vCPUs, at most sockets x cores. " \
+                         "Defaults to sockets x cores when --cores or --sockets is given."
+
           option :memory,
             long:        "--memory MiB",
             description: "Memory in MiB."
@@ -193,7 +198,7 @@ class Chef
         # Timeouts always carry an integer default, but a CLI override (--boot-timeout 180)
         # arrives as a String — coerce it here so the Provisioner's deadline arithmetic
         # (monotonic_now + timeout) never hits "String can't be coerced into Float".
-        %i{cores sockets memory prefix clone_timeout boot_timeout}.each do |key|
+        %i{cores sockets vcpus memory prefix clone_timeout boot_timeout}.each do |key|
           next unless config.key?(key) && !config[key].nil?
 
           config[key] = positive_integer!(key, config[key])
@@ -373,6 +378,7 @@ class Chef
         {
           cores:         config[:cores],
           sockets:       config[:sockets],
+          vcpus:         config[:vcpus],
           memory:        config[:memory],
           bridge:        from_cli_or_cluster(:bridge),
           vlan:          config[:vlan],

@@ -151,6 +151,7 @@ Both commands share the provisioning flags below.
 | `--linked-clone` | Linked clone instead of the default full clone (`--storage` is then ignored). |
 | `--storage NAME` / `--pool NAME` | Target storage / resource pool. |
 | `--cores N` / `--sockets N` / `--memory MiB` | CPU / RAM. |
+| `--vcpus N` | Active vCPUs, at most sockets × cores. Set to sockets × cores when omitted with `--cores`/`--sockets` (the template's vcpus is not kept). |
 | `--disk-size SIZE` | Grow the disk before the first boot: `+20G` adds to the template's size, `50G` sets it. |
 | `--disk DISK` | Disk to resize (`scsi0`, `virtio0`, …). Defaults to the cloned VM's boot disk. |
 | `--bridge vmbrN` / `--vlan TAG` | net0 bridge and VLAN tag (needs a VLAN-aware bridge). |
@@ -229,6 +230,26 @@ client-side.
 Disk, memory and uptime are rendered human-readable (e.g. `10 GiB`, `1h`) in the default
 table output. All read commands honour `--format json|yaml` for scripting, where these fields
 stay raw (bytes / seconds).
+
+### `knife proxmox vm start NAME_OR_VMID`
+
+Starts a stopped VM and waits until it is running (`--timeout SECONDS`, default 300).
+The target is a VM name or numeric VMID. Proxmox does not enforce unique VM names, so an
+ambiguous name is an error — pass the VMID instead. Starting an already-running VM is a
+warning, not a failure.
+
+### `knife proxmox vm stop NAME_OR_VMID`
+
+Hard-stops a running VM — an immediate power-off (the API equivalent of `qm stop`); for a
+graceful shutdown use `vm shutdown` — and waits until it is stopped (`--timeout SECONDS`,
+default 300). Target resolution and the already-stopped case behave as in `vm start`.
+
+### `knife proxmox vm shutdown NAME_OR_VMID`
+
+Gracefully shuts a running VM down via ACPI (the API equivalent of `qm shutdown`) and waits
+until it is stopped. `--timeout SECONDS` (default 300) also bounds the ACPI wait inside the Proxmox
+task itself, so a guest that ignores the event fails the command instead of hanging it.
+Target resolution and the already-stopped case behave as in `vm start`.
 
 ## Development
 

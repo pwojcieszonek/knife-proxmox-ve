@@ -51,6 +51,47 @@ RSpec.describe Knife::Proxmox::Api do
     end
   end
 
+  describe "#find_vm" do
+    before { stub_cluster_resources }
+
+    it "matches a VM by name and returns identity including status" do
+      expect(api.find_vm("web-01"))
+        .to eq(vmid: 101, node: "pve1", name: "web-01", status: "running")
+    end
+
+    it "matches a VM by numeric vmid (given as Integer or String)" do
+      expect(api.find_vm(101)[:vmid]).to eq(101)
+      expect(api.find_vm("101")[:vmid]).to eq(101)
+    end
+
+    it "never matches a template, even when the vmid matches" do
+      expect { api.find_vm(9000) }.to raise_error(Knife::Proxmox::NotFoundError)
+    end
+
+    it "never matches an lxc resource (qemu filter)" do
+      expect { api.find_vm("ct-dns") }.to raise_error(Knife::Proxmox::NotFoundError)
+    end
+
+    it "raises NotFoundError when no VM matches" do
+      expect { api.find_vm("does-not-exist") }
+        .to raise_error(Knife::Proxmox::NotFoundError, /does-not-exist/)
+    end
+
+    it "raises AmbiguousMatchError listing candidates when a name matches several VMs" do
+      stub_request(:get, "#{base}/cluster/resources")
+        .with(query: { "type" => "vm" })
+        .to_return(status: 200, body: ProxmoxResponses.wrap([
+          { "vmid" => 101, "name" => "web-01", "node" => "pve1", "type" => "qemu",
+            "template" => 0, "status" => "running" },
+          { "vmid" => 102, "name" => "web-01", "node" => "pve2", "type" => "qemu",
+            "template" => 0, "status" => "stopped" },
+        ]))
+
+      expect { api.find_vm("web-01") }
+        .to raise_error(Knife::Proxmox::AmbiguousMatchError, /101 on pve1.*102 on pve2.*use the vmid/)
+    end
+  end
+
   describe "#list_resources" do
     before { stub_cluster_resources }
 
@@ -151,6 +192,41 @@ RSpec.describe Knife::Proxmox::Api do
     end
   end
 
+  describe "#stop" do
+    it "posts to status/stop and returns the UPID" do
+      stub = stub_request(:post, "#{base}/nodes/pve1/qemu/9001/status/stop")
+        .to_return(status: 200, body: ProxmoxResponses.wrap(ProxmoxResponses.upid(type: "qmstop")))
+
+      result = api.stop(node: "pve1", vmid: 9001)
+
+      expect(stub).to have_been_requested
+      expect(result).to eq(ProxmoxResponses.upid(type: "qmstop"))
+    end
+  end
+
+  describe "#shutdown" do
+    it "posts the ACPI-wait timeout to status/shutdown and returns the UPID" do
+      stub = stub_request(:post, "#{base}/nodes/pve1/qemu/9001/status/shutdown")
+        .with(body: { "timeout" => "300" })
+        .to_return(status: 200, body: ProxmoxResponses.wrap(ProxmoxResponses.upid(type: "qmshutdown")))
+
+      result = api.shutdown(node: "pve1", vmid: 9001, timeout: 300)
+
+      expect(stub).to have_been_requested
+      expect(result).to eq(ProxmoxResponses.upid(type: "qmshutdown"))
+    end
+
+    it "sends no timeout param when none is given (PVE waits unbounded)" do
+      stub = stub_request(:post, "#{base}/nodes/pve1/qemu/9001/status/shutdown")
+        .with(body: {})
+        .to_return(status: 200, body: ProxmoxResponses.wrap(ProxmoxResponses.upid(type: "qmshutdown")))
+
+      api.shutdown(node: "pve1", vmid: 9001)
+
+      expect(stub).to have_been_requested
+    end
+  end
+
   describe "#vm_config" do
     it "returns the config Hash" do
       stub_request(:get, "#{base}/nodes/pve1/qemu/9001/config")
@@ -190,6 +266,46 @@ RSpec.describe Knife::Proxmox::Api do
 
       expect { api.agent_ip_addresses(node: "pve1", vmid: 9001) }
         .to raise_error(Knife::Proxmox::NotFoundError)
+    end
+  end
+
+  describe "#vm_status" do
+    it "reads the live status from the node" do
+      stub_request(:get, "#{base}/nodes/pve1/qemu/101/status/current")
+        .to_return(status: 200, body: ProxmoxResponses.wrap("status" => "running", "vmid" => 101))
+
+      expect(api.vm_status(node: "pve1", vmid: 101)).to eq("running")
+    end
+  end
+
+  describe "#wait_status" do
+    let(:status_path) { "#{base}/nodes/pve1/qemu/101/status/current" }
+
+    it "polls until the VM reports the wanted status" do
+      stub_request(:get, status_path).to_return(
+        { status: 200, body: ProxmoxResponses.wrap("status" => "running") },
+        { status: 200, body: ProxmoxResponses.wrap("status" => "stopped") }
+      )
+
+      calls = []
+      expect(api.wait_status(node: "pve1", vmid: 101, status: "stopped", sleeper: ->(s) { calls << s }))
+        .to be(true)
+      expect(calls).to eq([2])
+    end
+
+    it "checks once even with no time left" do
+      stub_request(:get, status_path).to_return(status: 200, body: ProxmoxResponses.wrap("status" => "stopped"))
+
+      expect(api.wait_status(node: "pve1", vmid: 101, status: "stopped", timeout: 0, sleeper: ->(_) {}))
+        .to be(true)
+    end
+
+    it "raises TimeoutError once the monotonic deadline passes" do
+      stub_request(:get, status_path).to_return(status: 200, body: ProxmoxResponses.wrap("status" => "running"))
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(0.0, 1000.0)
+
+      expect { api.wait_status(node: "pve1", vmid: 101, status: "stopped", timeout: 5, sleeper: ->(_) {}) }
+        .to raise_error(Knife::Proxmox::TimeoutError, /VM 101 did not reach stopped within 5s/)
     end
   end
 

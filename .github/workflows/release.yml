@@ -8,8 +8,7 @@
 # Trusted Publishing (OIDC) — no API key is stored anywhere. This is compatible
 # with the `rubygems_mfa_required` flag set in the gemspec.
 #
-# To cut a release: bump VERSION in version.rb, update CHANGELOG.md, merge to
-# main. That's it.
+# To cut a release: bump VERSION in version.rb and merge to main. That's it.
 #
 # One-time setup on rubygems.org (Gem -> Trusted Publishers -> GitHub Actions):
 #   - Repository: pwojcieszonek/knife-proxmox-ve
