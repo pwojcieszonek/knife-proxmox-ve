@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
     "rubygems_mfa_required" => "true",
   }
 
-  spec.files = Dir["lib/**/*.rb"] + %w{LICENSE README.md CHANGELOG.md}
+  spec.files = Dir["lib/**/*.rb"] + %w{LICENSE README.md}
   spec.require_paths = ["lib"]
 
   # knife is its own gem since Chef 18; the plugin depends on it, not on `chef`.
