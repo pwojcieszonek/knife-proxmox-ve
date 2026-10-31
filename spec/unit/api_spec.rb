@@ -269,6 +269,46 @@ RSpec.describe Knife::Proxmox::Api do
     end
   end
 
+  describe "#vm_status" do
+    it "reads the live status from the node" do
+      stub_request(:get, "#{base}/nodes/pve1/qemu/101/status/current")
+        .to_return(status: 200, body: ProxmoxResponses.wrap("status" => "running", "vmid" => 101))
+
+      expect(api.vm_status(node: "pve1", vmid: 101)).to eq("running")
+    end
+  end
+
+  describe "#wait_status" do
+    let(:status_path) { "#{base}/nodes/pve1/qemu/101/status/current" }
+
+    it "polls until the VM reports the wanted status" do
+      stub_request(:get, status_path).to_return(
+        { status: 200, body: ProxmoxResponses.wrap("status" => "running") },
+        { status: 200, body: ProxmoxResponses.wrap("status" => "stopped") }
+      )
+
+      calls = []
+      expect(api.wait_status(node: "pve1", vmid: 101, status: "stopped", sleeper: ->(s) { calls << s }))
+        .to be(true)
+      expect(calls).to eq([2])
+    end
+
+    it "checks once even with no time left" do
+      stub_request(:get, status_path).to_return(status: 200, body: ProxmoxResponses.wrap("status" => "stopped"))
+
+      expect(api.wait_status(node: "pve1", vmid: 101, status: "stopped", timeout: 0, sleeper: ->(_) {}))
+        .to be(true)
+    end
+
+    it "raises TimeoutError once the monotonic deadline passes" do
+      stub_request(:get, status_path).to_return(status: 200, body: ProxmoxResponses.wrap("status" => "running"))
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(0.0, 1000.0)
+
+      expect { api.wait_status(node: "pve1", vmid: 101, status: "stopped", timeout: 5, sleeper: ->(_) {}) }
+        .to raise_error(Knife::Proxmox::TimeoutError, /VM 101 did not reach stopped within 5s/)
+    end
+  end
+
   describe "#wait_task" do
     let(:upid) { ProxmoxResponses.upid(node: "pve1") }
     let(:enc_upid) { Knife::Proxmox::Client.encode_segment(upid) }

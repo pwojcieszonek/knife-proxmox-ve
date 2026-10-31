@@ -233,7 +233,7 @@ stay raw (bytes / seconds).
 
 ### `knife proxmox vm start NAME_OR_VMID`
 
-Starts a stopped VM and waits for the start task (`--timeout SECONDS`, default 300).
+Starts a stopped VM and waits until it is running (`--timeout SECONDS`, default 300).
 The target is a VM name or numeric VMID. Proxmox does not enforce unique VM names, so an
 ambiguous name is an error — pass the VMID instead. Starting an already-running VM is a
 warning, not a failure.
@@ -241,13 +241,13 @@ warning, not a failure.
 ### `knife proxmox vm stop NAME_OR_VMID`
 
 Hard-stops a running VM — an immediate power-off (the API equivalent of `qm stop`); for a
-graceful shutdown use `vm shutdown` — and waits for the stop task (`--timeout SECONDS`,
+graceful shutdown use `vm shutdown` — and waits until it is stopped (`--timeout SECONDS`,
 default 300). Target resolution and the already-stopped case behave as in `vm start`.
 
 ### `knife proxmox vm shutdown NAME_OR_VMID`
 
 Gracefully shuts a running VM down via ACPI (the API equivalent of `qm shutdown`) and waits
-for the task. `--timeout SECONDS` (default 300) also bounds the ACPI wait inside the Proxmox
+until it is stopped. `--timeout SECONDS` (default 300) also bounds the ACPI wait inside the Proxmox
 task itself, so a guest that ignores the event fails the command instead of hanging it.
 Target resolution and the already-stopped case behave as in `vm start`.
 

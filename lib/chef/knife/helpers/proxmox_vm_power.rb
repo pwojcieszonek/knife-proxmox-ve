@@ -4,8 +4,9 @@ class Chef
   class Knife
     # Shared flow for the VM power commands (`vm start` / `vm stop` / `vm shutdown`):
     # resolve the target VM by name or vmid, short-circuit when it is already in the
-    # desired state, fire the status endpoint and wait for the async task. Commands stay
-    # declarative: banner plus a one-line #run naming the action.
+    # desired state, fire the status endpoint, then wait for the async task and for the VM
+    # to reach that state. Commands stay declarative: banner plus a one-line #run naming
+    # the action.
     module ProxmoxVmPower
       # Extra seconds the client waits beyond an endpoint-side timeout, so the PVE task
       # reports its own failure (e.g. a guest ignoring ACPI) before the client deadline
@@ -29,10 +30,16 @@ class Chef
       # With api_timeout: true the --timeout value is also sent to the endpoint itself
       # (shutdown: bounds the ACPI wait inside the PVE task, which is otherwise unbounded),
       # and the client wait is extended by TASK_WAIT_GRACE.
+      #
+      # Success means the VM reached +desired+, not just that the task finished: for an
+      # HA-managed VM the task only queues the request, so the live status is polled after
+      # it, within what is left of the same deadline.
       def power_action!(action, desired:, api_timeout: false)
         vm = resolve_power_target!(action)
+        target = { node: vm[:node], vmid: vm[:vmid] }
 
-        if vm[:status] == desired
+        # find_vm's status is cluster-cached and can lag a recent power change.
+        if proxmox_api.vm_status(**target) == desired
           ui.warn("VM #{vm[:name]} (vmid #{vm[:vmid]}) is already #{desired}")
           return
         end
@@ -45,9 +52,12 @@ class Chef
           api_params = {}
           wait_timeout = timeout
         end
+        deadline = monotonic_now + wait_timeout
 
-        upid = proxmox_api.public_send(action, node: vm[:node], vmid: vm[:vmid], **api_params)
+        upid = proxmox_api.public_send(action, **target, **api_params)
         proxmox_api.wait_task(upid:, timeout: wait_timeout)
+        remaining = [deadline - monotonic_now, 0].max
+        proxmox_api.wait_status(**target, status: desired, timeout: remaining)
 
         msg_pair("VM name", vm[:name])
         msg_pair("VMID", vm[:vmid])
@@ -74,6 +84,10 @@ class Chef
         int
       rescue ArgumentError
         ui.fatal!("--timeout must be an integer (got #{value.inspect})")
+      end
+
+      def monotonic_now
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
     end
   end

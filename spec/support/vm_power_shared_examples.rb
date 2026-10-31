@@ -19,6 +19,8 @@ RSpec.shared_examples "a vm power command" do |action:, desired:, initial:, api_
     command.merge_configs
     allow(command).to receive(:proxmox_api).and_return(api)
     allow(api).to receive(:find_vm).with("web-01").and_return(vm)
+    allow(api).to receive(:vm_status).with(node: "pve1", vmid: 101).and_return(initial)
+    allow(api).to receive(:wait_status).and_return(true)
     allow(api).to receive(action).and_return(upid)
     allow(api).to receive(:wait_task).and_return(true)
     # Silence terminal output (msg_pair goes through ui.info).
@@ -50,8 +52,34 @@ RSpec.shared_examples "a vm power command" do |action:, desired:, initial:, api_
       expect(api).to have_received(action).with(hash_including(timeout: 60)) if api_timeout
     end
 
-    it "warns and skips the API action when the VM is already #{desired}" do
+    it "waits for the VM to reach #{desired} after the task, within the same deadline" do
+      command.run
+
+      expect(api).to have_received(:wait_task).ordered
+      expect(api).to have_received(:wait_status)
+        .with(node: "pve1", vmid: 101, status: desired, timeout: a_value_between(0, 300 + grace))
+        .ordered
+    end
+
+    it "fails without reporting success when the VM never reaches #{desired}" do
+      allow(api).to receive(:wait_status)
+        .and_raise(Knife::Proxmox::TimeoutError, "VM 101 did not reach #{desired} within 300s")
+      allow(command).to receive(:msg_pair)
+
+      expect { command.run }.to raise_error(Knife::Proxmox::TimeoutError)
+      expect(command).not_to have_received(:msg_pair)
+    end
+
+    it "decides on the live status, not the cluster-cached one" do
       vm[:status] = desired
+
+      command.run
+
+      expect(api).to have_received(action)
+    end
+
+    it "warns and skips the API action when the VM is already #{desired}" do
+      allow(api).to receive(:vm_status).with(node: "pve1", vmid: 101).and_return(desired)
 
       command.run
 

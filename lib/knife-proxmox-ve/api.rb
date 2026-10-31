@@ -11,8 +11,8 @@ module Knife
     # where the cluster API mixes VM types, and keeps path segments injection-safe by
     # routing node names and UPIDs through Client.encode_segment.
     class Api
-      # Polling defaults for #wait_task. A monotonic deadline (not wall clock) guards the
-      # timeout so a clock step cannot stretch or cut short the wait.
+      # Polling defaults for #wait_task and #wait_status. A monotonic deadline (not wall
+      # clock) guards the timeout so a clock step cannot stretch or cut short the wait.
       DEFAULT_TIMEOUT = 300
       DEFAULT_INTERVAL = 2
 
@@ -42,8 +42,8 @@ module Knife
       # Resolve a plain VM (never a template) by name or numeric vmid. A vmid is unique
       # cluster-wide, but names are not — an ambiguous name raises AmbiguousMatchError
       # instead of picking an arbitrary VM to act on. Raises NotFoundError when nothing
-      # matches. Returns identity plus the current status so callers can short-circuit
-      # a no-op power action.
+      # matches. Returns identity plus the cluster-cached status (see #vm_status for the
+      # live one).
       def find_vm(name_or_vmid)
         wanted = name_or_vmid.to_s
         matches = qemu_resources.select do |r|
@@ -160,24 +160,50 @@ module Knife
       # once the monotonic deadline passes.
       def wait_task(upid:, timeout: DEFAULT_TIMEOUT, interval: DEFAULT_INTERVAL, sleeper: nil)
         node = node_from_upid(upid)
-        sleeper ||= ->(seconds) { sleep(seconds) }
-        deadline = monotonic_now + timeout
+        expired = "task #{upid} did not finish within #{timeout}s"
 
-        loop do
+        poll(timeout:, interval:, sleeper:, expired:) do
           status = task_status(node, upid)
-          if status["status"] == "stopped"
-            return true if status["exitstatus"] == "OK"
+          next false unless status["status"] == "stopped"
 
-            raise_task_error(node, upid, status["exitstatus"])
-          end
+          raise_task_error(node, upid, status["exitstatus"]) unless status["exitstatus"] == "OK"
+          true
+        end
+      end
 
-          raise TimeoutError, "task #{upid} did not finish within #{timeout}s" if monotonic_now >= deadline
+      # Live power state of a VM ("running", "stopped", ...), read from its node.
+      # /cluster/resources serves the status pvestatd caches every ~10 s, too stale to
+      # decide on a power action.
+      def vm_status(node:, vmid:)
+        @client.get("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/status/current")["status"]
+      end
 
-          sleeper.call(interval)
+      # Poll #vm_status until it reports +status+. Returns true; raises TimeoutError once the
+      # monotonic deadline passes. Needed after a power task on an HA-managed VM, whose task
+      # only queues the request with the HA manager and finishes before the VM changes state.
+      def wait_status(node:, vmid:, status:, timeout: DEFAULT_TIMEOUT, interval: DEFAULT_INTERVAL, sleeper: nil)
+        expired = "VM #{vmid} did not reach #{status} within #{timeout}s"
+
+        poll(timeout:, interval:, sleeper:, expired:) do
+          vm_status(node:, vmid:) == status
         end
       end
 
       private
+
+      # Run the block every +interval+ seconds until it returns true, raising TimeoutError
+      # with +expired+ once the deadline passes. The block runs at least once.
+      def poll(timeout:, interval:, sleeper:, expired:)
+        sleeper ||= ->(seconds) { sleep(seconds) }
+        deadline = monotonic_now + timeout
+
+        loop do
+          return true if yield
+          raise TimeoutError, expired if monotonic_now >= deadline
+
+          sleeper.call(interval)
+        end
+      end
 
       def enc(value)
         Client.encode_segment(value)
