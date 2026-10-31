@@ -39,6 +39,32 @@ module Knife
         { vmid: entry["vmid"], node: entry["node"], name: entry["name"] }
       end
 
+      # Resolve a plain VM (never a template) by name or numeric vmid. A vmid is unique
+      # cluster-wide, but names are not — an ambiguous name raises AmbiguousMatchError
+      # instead of picking an arbitrary VM to act on. Raises NotFoundError when nothing
+      # matches. Returns identity plus the current status so callers can short-circuit
+      # a no-op power action.
+      def find_vm(name_or_vmid)
+        wanted = name_or_vmid.to_s
+        matches = qemu_resources.select do |r|
+          r["template"].to_i != 1 &&
+            (r["name"].to_s == wanted || r["vmid"].to_s == wanted)
+        end
+
+        if matches.empty?
+          raise NotFoundError.new("no qemu VM matches #{name_or_vmid.inspect}", status: 404)
+        end
+
+        if matches.length > 1
+          candidates = matches.map { |r| "#{r["vmid"]} on #{r["node"]}" }.join(", ")
+          raise AmbiguousMatchError,
+            "VM name #{wanted.inspect} matches several VMs (#{candidates}); use the vmid"
+        end
+
+        entry = matches.first
+        { vmid: entry["vmid"], node: entry["node"], name: entry["name"], status: entry["status"] }
+      end
+
       # List qemu resources, optionally narrowed to templates (template: true) or plain VMs
       # (template: false); nil keeps both. Returns a uniform Hash per entry with missing
       # fields normalized to nil.
@@ -88,6 +114,22 @@ module Knife
       # Start a VM. Returns the UPID of the async start task.
       def start(node:, vmid:)
         @client.post("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/status/start")
+      end
+
+      # Hard-stop a VM (immediate power-off, like `qm stop` — NOT an ACPI shutdown).
+      # Returns the UPID of the async stop task.
+      def stop(node:, vmid:)
+        @client.post("/nodes/#{enc(node)}/qemu/#{enc(vmid)}/status/stop")
+      end
+
+      # Gracefully shut a VM down via ACPI (like `qm shutdown`). +timeout+ (seconds) bounds
+      # the wait inside the PVE task itself — without it the task waits indefinitely on a
+      # guest that ignores the ACPI event. Returns the UPID of the async shutdown task.
+      def shutdown(node:, vmid:, timeout: nil)
+        @client.post(
+          "/nodes/#{enc(node)}/qemu/#{enc(vmid)}/status/shutdown",
+          { timeout: }.compact
+        )
       end
 
       # Current VM config Hash (string keys). Used to detect the cloud-init drive and to

@@ -30,6 +30,11 @@ module Knife
     # 404 — resource (node, VM, task) not found at the requested path.
     class NotFoundError < ApiError; end
 
+    # A name lookup matched more than one resource (Proxmox does not enforce unique VM
+    # names). Acting on an arbitrary match would be guessing, so the caller must
+    # disambiguate — the message lists the candidates and tells the user to pass the vmid.
+    class AmbiguousMatchError < Error; end
+
     # A Proxmox async task (clone, start, ...) finished with exitstatus != "OK".
     #
     # +log+ is pre-scrubbed of secret-bearing keys, so it is safe to display.
