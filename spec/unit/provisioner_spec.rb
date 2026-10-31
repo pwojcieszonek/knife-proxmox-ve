@@ -48,6 +48,13 @@ RSpec.describe Knife::Proxmox::Provisioner do
     allow(api).to receive(:agent_ip_addresses).and_return([agent_ip])
   end
 
+  def captured_update_params(config)
+    captured = nil
+    allow(api).to receive(:update_config) { |args| captured = args }
+    provisioner.provision(base_spec(config:))
+    captured
+  end
+
   describe "#provision clone + task sequencing" do
     before { allow_happy_path }
 
@@ -138,13 +145,6 @@ RSpec.describe Knife::Proxmox::Provisioner do
   describe "#provision config param building" do
     before { allow_happy_path }
 
-    def captured_update_params(config)
-      captured = nil
-      allow(api).to receive(:update_config) { |args| captured = args }
-      provisioner.provision(base_spec(config:))
-      captured
-    end
-
     it "passes cores/sockets/memory/ciuser/cipassword/nameserver/searchdomain through" do
       params = captured_update_params(
         cores: 2, sockets: 1, memory: 2048, ciuser: "ubuntu", cipassword: "s3cret",
@@ -209,6 +209,63 @@ RSpec.describe Knife::Proxmox::Provisioner do
     end
   end
 
+  describe "#provision CPU topology" do
+    before { allow_happy_path }
+
+    let(:template_cpu) { { "sockets" => 1, "cores" => 4, "vcpus" => 4 } }
+
+    it "sets vcpus to sockets x cores when vcpus is not given" do
+      params = captured_update_params(sockets: 1, cores: 2)
+
+      expect(params).to include(sockets: 1, cores: 2, vcpus: 2)
+      expect(api).not_to have_received(:vm_config)
+    end
+
+    it "keeps a requested vcpus that fits the topology" do
+      params = captured_update_params(sockets: 2, cores: 2, vcpus: 3)
+
+      expect(params).to include(sockets: 2, cores: 2, vcpus: 3)
+    end
+
+    it "takes the missing topology value from the template" do
+      expect(api).to receive(:vm_config).with(node: "pve1", vmid: 9000).and_return("sockets" => "2")
+
+      params = captured_update_params(cores: 2)
+
+      expect(params).to include(cores: 2, vcpus: 4)
+      expect(params).not_to have_key(:sockets)
+    end
+
+    it "checks a lone vcpus against the template topology" do
+      allow(api).to receive(:vm_config).with(node: "pve1", vmid: 9000).and_return(template_cpu)
+
+      params = captured_update_params(vcpus: 2)
+
+      expect(params).to include(vcpus: 2)
+      expect(params).not_to include(:sockets, :cores)
+    end
+
+    it "falls back to one socket when the template does not set it" do
+      allow(api).to receive(:vm_config).with(node: "pve1", vmid: 9000).and_return({})
+
+      expect(captured_update_params(cores: 3)).to include(vcpus: 3)
+    end
+
+    it "raises before cloning when vcpus exceeds sockets x cores" do
+      allow(api).to receive(:vm_config).with(node: "pve1", vmid: 9000).and_return(template_cpu)
+      expect(api).not_to receive(:clone)
+
+      expect { provisioner.provision(base_spec(config: { sockets: 2, vcpus: 9 })) }
+        .to raise_error(Knife::Proxmox::Error, /vcpus 9 exceeds sockets x cores \(2 x 4 = 8\)/)
+    end
+
+    it "leaves the CPU config alone when no CPU value is given" do
+      params = captured_update_params(memory: 2048)
+
+      expect(params).not_to include(:sockets, :cores, :vcpus)
+    end
+  end
+
   describe "#provision cloud-init drive guard" do
     it "raises a clear Error when a cloud-init key is set but no cloud-init drive exists" do
       allow(api).to receive(:next_id).and_return(9001)
@@ -241,7 +298,7 @@ RSpec.describe Knife::Proxmox::Provisioner do
 
       expect(api).not_to receive(:vm_config)
 
-      provisioner.provision(base_spec(config: { cores: 4, memory: 4096 }))
+      provisioner.provision(base_spec(config: { cores: 4, sockets: 1, memory: 4096 }))
     end
   end
 
@@ -342,7 +399,7 @@ RSpec.describe Knife::Proxmox::Provisioner do
       expect(api).not_to receive(:resize_disk)
       expect(api).not_to receive(:vm_config)
 
-      provisioner.provision(base_spec(config: { cores: 4 }))
+      provisioner.provision(base_spec(config: { cores: 4, sockets: 1 }))
     end
   end
 

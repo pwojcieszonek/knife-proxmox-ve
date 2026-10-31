@@ -57,10 +57,13 @@ module Knife
       # its shape). Returns a Result; raises Knife::Proxmox::* loudly on any failure.
       def provision(spec)
         template = spec.fetch(:template)
+        config = spec.fetch(:config, {}) || {}
+        # Resolved before the clone, so an impossible vcpus count fails before a VM exists.
+        cpu = cpu_params(template, config)
         newid = clone_with_retry(spec, template)
         node = spec[:target_node] || template[:node]
 
-        params = build_config(spec.fetch(:config, {}) || {})
+        params = build_config(config).merge(cpu)
         # One read serves both the cloud-init drive guard and disk discovery; a hardware-only
         # provision needs neither and never reads the config back.
         vm_config = read_vm_config(node, newid, params, spec)
@@ -116,7 +119,7 @@ module Knife
       # actually present are emitted, so a partial spec never clears unrelated VM config.
       def build_config(config)
         params = {}
-        %i{cores sockets memory ciuser cipassword nameserver searchdomain}.each do |key|
+        %i{memory ciuser cipassword nameserver searchdomain}.each do |key|
           value = config[key]
           params[key] = value unless value.nil?
         end
@@ -129,6 +132,37 @@ module Knife
         params[:sshkeys] = sshkeys if sshkeys
 
         params
+      end
+
+      # Proxmox rejects a vcpus count above sockets x cores, and the template's own vcpus
+      # survives the clone: a template with vcpus=4 cloned to 1 socket x 2 cores fails the
+      # config update. So any CPU change also sends vcpus — the requested count once it fits,
+      # else the full sockets x cores.
+      def cpu_params(template, config)
+        requested = config.slice(:sockets, :cores, :vcpus).compact
+        return {} if requested.empty?
+
+        sockets, cores = cpu_topology(template, requested)
+        limit = sockets * cores
+        vcpus = requested.fetch(:vcpus, limit)
+        if vcpus > limit
+          raise Knife::Proxmox::Error,
+            "vcpus #{vcpus} exceeds sockets x cores (#{sockets} x #{cores} = #{limit})"
+        end
+
+        requested.merge(vcpus:)
+      end
+
+      # The clone's resulting topology: the requested values, with any missing one taken from
+      # the template (read only then), or Proxmox's default of 1 when the template omits it.
+      def cpu_topology(template, requested)
+        return requested.values_at(:sockets, :cores) if requested.key?(:sockets) && requested.key?(:cores)
+
+        current = @api.vm_config(node: template[:node], vmid: template[:vmid])
+        [
+          requested.fetch(:sockets) { Integer(current.fetch("sockets", 1)) },
+          requested.fetch(:cores) { Integer(current.fetch("cores", 1)) },
+        ]
       end
 
       # Emit net0 only when bridge or vlan is given; otherwise the template's net0 (and its

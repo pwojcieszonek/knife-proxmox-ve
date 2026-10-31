@@ -269,6 +269,13 @@ RSpec.describe Chef::Knife::ProxmoxVmBootstrap do
         expect(kpc.ui).to have_received(:fatal!).with(/greater than 0/)
       end
 
+      it "fatals when --vcpus is not a positive integer" do
+        kpc.config[:vcpus] = "0"
+
+        expect { kpc.plugin_validate_options! }.to raise_error(SystemExit)
+        expect(kpc.ui).to have_received(:fatal!).with(/--vcpus must be greater than 0/)
+      end
+
       it "fatals when --memory is not an integer" do
         kpc.config[:memory] = "lots"
 

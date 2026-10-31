@@ -151,6 +151,7 @@ Both commands share the provisioning flags below.
 | `--linked-clone` | Linked clone instead of the default full clone (`--storage` is then ignored). |
 | `--storage NAME` / `--pool NAME` | Target storage / resource pool. |
 | `--cores N` / `--sockets N` / `--memory MiB` | CPU / RAM. |
+| `--vcpus N` | Active vCPUs, at most sockets × cores. Set to sockets × cores when omitted with `--cores`/`--sockets` (the template's vcpus is not kept). |
 | `--disk-size SIZE` | Grow the disk before the first boot: `+20G` adds to the template's size, `50G` sets it. |
 | `--disk DISK` | Disk to resize (`scsi0`, `virtio0`, …). Defaults to the cloned VM's boot disk. |
 | `--bridge vmbrN` / `--vlan TAG` | net0 bridge and VLAN tag (needs a VLAN-aware bridge). |

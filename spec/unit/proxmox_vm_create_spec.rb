@@ -147,6 +147,16 @@ RSpec.describe Chef::Knife::ProxmoxVmCreate do
 
       kpc.run
     end
+
+    it "passes the CPU flags to the provisioner as integers" do
+      kpc.config.merge!(sockets: "1", cores: "2", vcpus: "2")
+      expect(provisioner).to receive(:provision) do |spec|
+        expect(spec[:config]).to include(sockets: 1, cores: 2, vcpus: 2)
+        Knife::Proxmox::Provisioner::Result.new(vmid: 9001, node: "pve1", ip: "10.0.10.50")
+      end
+
+      kpc.run
+    end
   end
 
   describe "disk resize" do
